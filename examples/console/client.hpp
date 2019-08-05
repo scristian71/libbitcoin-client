@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2011-2017 libbitcoin developers (see AUTHORS)
+ * Copyright (c) 2011-2019 libbitcoin developers (see AUTHORS)
  *
  * This file is part of libbitcoin.
  *
@@ -52,6 +52,7 @@ private:
     void cmd_help(std::stringstream& args);
     void cmd_connect(std::stringstream& args);
     void cmd_disconnect(std::stringstream& args);
+    void cmd_version(std::stringstream& args);
     void cmd_height(std::stringstream& args);
     void cmd_history(std::stringstream& args);
     void cmd_header(std::stringstream& args);
@@ -73,13 +74,13 @@ private:
      * the address is missing or invalid.
      */
     bool read_address(std::stringstream& args,
-        bc::wallet::payment_address& out);
+        bc::system::wallet::payment_address& out);
 
     /**
      * Reads a 64 byte hex encoded hash from the command-line, or
      * prints an error if the hash is missing or invalid.
      */
-    bool read_hash(std::stringstream& args, bc::hash_digest& out);
+    bool read_hash(std::stringstream& args, bc::system::hash_digest& out);
 
     /**
      * Private members.

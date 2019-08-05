@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2011-2017 libbitcoin developers (see AUTHORS)
+ * Copyright (c) 2011-2019 libbitcoin developers (see AUTHORS)
  *
  * This file is part of libbitcoin.
  *
@@ -21,58 +21,154 @@
 #include <boost/test/test_tools.hpp>
 #include <boost/test/unit_test_suite.hpp>
 #include <bitcoin/client.hpp>
+#include <bitcoin/protocol.hpp>
 
-using namespace bc;
 using namespace bc::client;
-using namespace bc::wallet;
+using namespace bc::protocol;
+using namespace bc::system;
+using namespace bc::system::wallet;
 
-static const std::string mainnet_test_url = "tcp://mainnet.libbitcoin.net:9091";
+// FIXME: This points to a temporary v4 testnet instance.
+static const std::string testnet_test_url = "tcp://testnet2.libbitcoin.net:29091";
 
-// Arbitrary values for test cases (from mainnet block 100).
-static const uint32_t test_height = 100;
-static const std::string test_address = "13A1W4jLPP75pzvn2qJ5KyyqG3qPSpb9jM";
-static const char test_hash[] = "2d05f0c9c3e1c226e63b5fac240137687544cf631cd616fd34fd188fc9020866";
+// Arbitrary values for test cases (from testnet block 800,001).
+static const uint32_t test_height = 800001;
+static const std::string test_address = "2NGDnSYWMPY1mZCre69wWWgqV1T2wryAXNV";
+static const char test_key[] = "2ef44127d8b0e66eb991f79a8da10e901fc07a82d69a9cfc1ea6e53ae1c66465";
+static const char test_utxo_key[] = "4dda1bb623465ef9c36390975126c1cbff2f5693cc6ad6d3de34c240c092e2e5";
+static const char test_tx_hash[] = "6b0b5509edd6f14c85245f4192097632a7f785d1b2edba0566a2014a29277d73";
+static const char test_block_hash[] = "00000000002889eccd1262e2b7fe893b9839574d9db57755a1c717f88dae73d5";
 
 #define CLIENT_TEST_SETUP \
     static const uint32_t retries = 0; \
     obelisk_client client(retries); \
-    client.connect(config::endpoint(mainnet_test_url))
+    client.connect(config::endpoint(testnet_test_url))
 
-BOOST_AUTO_TEST_SUITE(client_tests)
+BOOST_AUTO_TEST_SUITE(stub)
 
-/* BOOST_AUTO_TEST_CASE(client__fetch_history4__test) */
-/* { */
-/*     CLIENT_TEST_SETUP; */
+BOOST_AUTO_TEST_CASE(client__dummy_test__ok)
+{
+    BOOST_REQUIRE_EQUAL(true, true);
+}
 
-/*     const uint32_t from_height = 0; */
-/*     const auto address = payment_address(test_address); */
-/*     const std::string encoded_expected = "f85beb6356d0813ddb0dbb14230a249fe931a13578563412"; */
-/*     std::string encoded_received; */
+BOOST_AUTO_TEST_SUITE(network)
 
-/*     const auto on_done = [&encoded_received](const history::list& rows) */
-/*     { */
-/*     }; */
+BOOST_AUTO_TEST_CASE(client__fetch_history4__test)
+{
+    CLIENT_TEST_SETUP;
 
-/*     client.blockchain_fetch_history4(on_error, on_done, address, from_height); */
-/*     client.wait(); */
+    const uint32_t expected_height = 923346;
+    const std::string expected_hash = "c331a7e31978f1b7ba4a60c6ebfce6eb713ab1542ddf2fd67bbf0824f9d1a353";
+    uint32_t received_height = 0;
+    std::string received_hash;
 
-/*     BOOST_REQUIRE_EQUAL(encoded_received, encoded_expected); */
-/* } */
+    const auto on_done = [&received_hash, &received_height](const code& ec, const history::list& rows)
+    {
+        if (ec == error::success)
+        {
+            const auto& row = rows.front();
+            received_hash = encode_hash(row.output.hash());
+            received_height = row.output_height;
+        }
+    };
+
+    client.blockchain_fetch_history4(on_done, hash_literal(test_utxo_key), 0);
+    client.wait();
+
+    BOOST_REQUIRE_EQUAL(received_hash, expected_hash);
+    BOOST_REQUIRE_EQUAL(received_height, expected_height);
+}
+
+BOOST_AUTO_TEST_CASE(client__subscribe_key__test_ok_and_timeout)
+{
+    CLIENT_TEST_SETUP;
+
+    size_t times_called = 0;
+
+    // This should be called exactly twice.  Once for subscription
+    // success, and then again for subscription timeout.
+    auto on_done = [&times_called](const code& ec, uint16_t, size_t,
+        const hash_digest&)
+    {
+        if (++times_called == 1)
+            BOOST_REQUIRE_EQUAL(ec, error::success);
+        else
+            BOOST_REQUIRE_EQUAL(ec, error::channel_timeout);
+    };
+
+    const auto id = client.subscribe_key(on_done, hash_literal(test_key));
+    client.monitor(0);
+
+    BOOST_REQUIRE_EQUAL(id, 1);
+}
+
+BOOST_AUTO_TEST_CASE(client__unsubscribe_key__test_ok)
+{
+    CLIENT_TEST_SETUP;
+
+    bool subscribed = false;
+    uint32_t id = obelisk_client::null_subscription;
+
+    auto subscribe_handler = [&client, &subscribed, &id]()
+    {
+        static const auto ten_minutes_in_milliseconds = 600 * 1000;
+
+        auto on_done = [&subscribed](const code& ec, uint16_t, size_t,
+            const hash_digest&)
+        {
+            if (ec == error::success)
+                subscribed = true;
+        };
+
+        id = client.subscribe_key(on_done, hash_literal(test_key));
+        BOOST_REQUIRE_EQUAL(id, 1);
+        client.monitor(ten_minutes_in_milliseconds);
+    };
+
+    // Waits until subscribe handler is subscribed and then unsubscribes.
+    auto unsubscribe_handler = [&client, &subscribed, &id]()
+    {
+        zmq::poller poller;
+        while(!subscribed)
+            poller.wait(100);
+
+        bool unsubscribe_complete = false;
+
+        auto on_done = [&unsubscribe_complete](const code& ec)
+        {
+            BOOST_REQUIRE_EQUAL(ec, error::success);
+            unsubscribe_complete = true;
+        };
+
+        BOOST_REQUIRE(id != obelisk_client::null_subscription);
+        BOOST_REQUIRE(client.unsubscribe_key(on_done, id) == true);
+
+        poller.wait(2000);
+        BOOST_REQUIRE(unsubscribe_complete == true);
+    };
+
+    std::thread unsubscriber(unsubscribe_handler);
+    std::thread subscriber(subscribe_handler);
+
+    subscriber.join();
+    unsubscriber.join();
+}
 
 BOOST_AUTO_TEST_CASE(client__fetch_transaction__test)
 {
     CLIENT_TEST_SETUP;
 
-    const std::string expected_hash = "660802c98f18fd34fd16d61c63cf447568370124ac5f3be626c2e1c3c9f0052d";
+    const std::string expected_hash = std::string(test_tx_hash);
 
     std::string received_hash;
     const auto on_done = [&received_hash](const code& ec, const chain::transaction& tx)
     {
+        BOOST_REQUIRE_EQUAL(ec, error::success);
         if (ec == error::success)
-            received_hash = encode_base16(tx.hash());
+            received_hash = encode_hash(tx.hash());
     };
 
-    client.blockchain_fetch_transaction(on_done, hash_literal(test_hash));
+    client.blockchain_fetch_transaction(on_done, hash_literal(test_tx_hash));
     client.wait();
 
     BOOST_REQUIRE_EQUAL(received_hash, expected_hash);
@@ -82,40 +178,42 @@ BOOST_AUTO_TEST_CASE(client__fetch_transaction2__test)
 {
     CLIENT_TEST_SETUP;
 
-    const std::string expected_hash = "660802c98f18fd34fd16d61c63cf447568370124ac5f3be626c2e1c3c9f0052d";
+    const std::string expected_hash = std::string(test_tx_hash);
 
     std::string received_hash;
     const auto on_done = [&received_hash](const code& ec, const chain::transaction& tx)
     {
+        BOOST_REQUIRE_EQUAL(ec, error::success);
         if (ec == error::success)
-            received_hash = encode_base16(tx.hash());
+            received_hash = encode_hash(tx.hash());
     };
 
-    client.blockchain_fetch_transaction2(on_done, hash_literal(test_hash));
+    client.blockchain_fetch_transaction2(on_done, hash_literal(test_tx_hash));
     client.wait();
 
     BOOST_REQUIRE_EQUAL(received_hash, expected_hash);
 }
 
-/* BOOST_AUTO_TEST_CASE(client__fetch_unspent_outputs__test) */
-/* { */
-/*     CLIENT_TEST_SETUP; */
+BOOST_AUTO_TEST_CASE(client__fetch_unspent_outputs__test)
+{
+    CLIENT_TEST_SETUP;
 
-/*     const auto satoshis = 10000; */
-/*     const uint64_t expected_value = 100; // FIXME */
-/*     uint64_t received_value = 0; */
+    const auto satoshis = 100000;
+    const std::string expected_hash = "c331a7e31978f1b7ba4a60c6ebfce6eb713ab1542ddf2fd67bbf0824f9d1a353";
+    std::string received_hash;
 
-/*     const auto on_done = [&received_value](const chain::points_value& value) */
-/*     { */
-/*         received_value = value.value(); */
-/*     }; */
+    const auto on_done = [&received_hash](const code& ec, const chain::points_value& value)
+    {
+        if (ec == error::success)
+            received_hash = encode_hash(value.points.front().hash());
+    };
 
-/*     client.blockchain_fetch_unspent_outputs(on_error, on_done, { test_address }, */
-/*         satoshis, wallet::select_outputs::algorithm::individual); */
-/*     client.wait(); */
+    client.blockchain_fetch_unspent_outputs(on_done, hash_literal(test_utxo_key),
+        satoshis, wallet::select_outputs::algorithm::individual);
+    client.wait();
 
-/*     BOOST_REQUIRE_EQUAL(received_value, expected_value); */
-/* } */
+    BOOST_REQUIRE_EQUAL(received_hash, expected_hash);
+}
 
 BOOST_AUTO_TEST_CASE(client__fetch_last_height__test)
 {
@@ -174,12 +272,13 @@ BOOST_AUTO_TEST_CASE(client__fetch_block_header__height_test)
 {
     CLIENT_TEST_SETUP;
 
-    std::string expected_hash = "9a22db7fd25e719abf9e8ccf869fbbc1e22fa71822a37efae054c17b00000000";
+    const std::string expected_hash = std::string(test_block_hash);
+
     std::string received_hash;
     const auto on_done = [&received_hash](const code& ec, const chain::header& header)
     {
         if (ec == error::success)
-            received_hash = encode_base16(header.hash());
+            received_hash = encode_hash(header.hash());
     };
 
     client.blockchain_fetch_block_header(on_done, test_height);
@@ -192,8 +291,8 @@ BOOST_AUTO_TEST_CASE(client__fetch_block_header__hash_test)
 {
     CLIENT_TEST_SETUP;
 
-    const std::string expected_hash = "9a22db7fd25e719abf9e8ccf869fbbc1e22fa71822a37efae054c17b00000000";
-    const std::string expected_previous_hash = "95194b8567fe2e8bbda931afd01a7acd399b9325cb54683e64129bcd00000000";
+    const std::string expected_hash = std::string(test_block_hash);
+    const std::string expected_previous_hash = "0000000000209b091d6519187be7c2ee205293f25f9f503f90027e25abf8b503";
 
     std::string received_hash;
     std::string received_previous_hash;
@@ -203,8 +302,8 @@ BOOST_AUTO_TEST_CASE(client__fetch_block_header__hash_test)
         if (ec != error::success)
             return;
 
-        received_hash = encode_base16(header.hash());
-        received_previous_hash = encode_base16(header.previous_block_hash());
+        received_hash = encode_hash(header.hash());
+        received_previous_hash = encode_hash(header.previous_block_hash());
     };
 
     client.blockchain_fetch_block_header(on_done, test_height);
@@ -218,13 +317,14 @@ BOOST_AUTO_TEST_CASE(client__fetch_transaction__index_test)
 {
     CLIENT_TEST_SETUP;
 
-    const size_t expected_block = 100;
-    const size_t expected_index = 0;
+    const size_t expected_block = test_height;
+    const size_t expected_index = 1;
 
-    size_t received_block = 0;
-    size_t received_index = 0;
+    size_t received_block = 9999;
+    size_t received_index = 9999;
 
-    const auto on_done = [&received_block, &received_index](const code& ec, size_t block, size_t index)
+    const auto on_done = [&received_block, &received_index](const code& ec,
+        size_t block, size_t index)
     {
         if (ec != error::success)
             return;
@@ -233,7 +333,7 @@ BOOST_AUTO_TEST_CASE(client__fetch_transaction__index_test)
         received_index = index;
     };
 
-    client.blockchain_fetch_transaction_index(on_done, hash_literal(test_hash));
+    client.blockchain_fetch_transaction_index(on_done, hash_literal(test_tx_hash));
     client.wait();
 
     BOOST_REQUIRE_EQUAL(received_block, expected_block);
@@ -257,37 +357,37 @@ BOOST_AUTO_TEST_CASE(client__fetch_transaction__index_test)
 
 BOOST_AUTO_TEST_CASE(client__stealth_public__test)
 {
-    CLIENT_TEST_SETUP;
+    /* CLIENT_TEST_SETUP; */
 
-    const std::string expected_hash = "660802c98f18fd34fd16d61c63cf447568370124ac5f3be626c2e1c3c9f0052d";
+    /* const std::string expected_hash = std::string(test_hash); */
 
-    std::string received_hash;
-    const auto on_done = [&received_hash](const code& ec, const chain::transaction& tx)
-    {
-        if (ec == error::success)
-            received_hash = encode_base16(tx.hash());
-    };
+    /* std::string received_hash; */
+    /* const auto on_done = [&received_hash](const code& ec, const chain::transaction& tx) */
+    /* { */
+    /*     if (ec == error::success) */
+    /*         received_hash = encode_base16(tx.hash()); */
+    /* }; */
 
-    client.transaction_pool_fetch_transaction(on_done, hash_literal(test_hash));
-    client.wait();
+    /* client.transaction_pool_fetch_transaction(on_done, hash_literal(test_hash)); */
+    /* client.wait(); */
 
-    BOOST_REQUIRE_EQUAL(received_hash, expected_hash);
+    /* BOOST_REQUIRE_EQUAL(received_hash, expected_hash); */
 }
 
 BOOST_AUTO_TEST_CASE(client__pool_fetch_transaction__test)
 {
     CLIENT_TEST_SETUP;
 
-    const std::string expected_hash = "660802c98f18fd34fd16d61c63cf447568370124ac5f3be626c2e1c3c9f0052d";
+    const std::string expected_hash = std::string(test_tx_hash);
 
     std::string received_hash;
     const auto on_done = [&received_hash](const code& ec, const chain::transaction& tx)
     {
         if (ec == error::success)
-            received_hash = encode_base16(tx.hash());
+            received_hash = encode_hash(tx.hash());
     };
 
-    client.transaction_pool_fetch_transaction(on_done, hash_literal(test_hash));
+    client.transaction_pool_fetch_transaction(on_done, hash_literal(test_tx_hash));
     client.wait();
 
     BOOST_REQUIRE_EQUAL(received_hash, expected_hash);
@@ -297,32 +397,20 @@ BOOST_AUTO_TEST_CASE(client__pool_fetch_transaction2__test)
 {
     CLIENT_TEST_SETUP;
 
-    const std::string expected_hash = "660802c98f18fd34fd16d61c63cf447568370124ac5f3be626c2e1c3c9f0052d";
+    const std::string expected_hash = std::string(test_tx_hash);
 
     std::string received_hash;
     const auto on_done = [&received_hash](const code& ec, const chain::transaction& tx)
     {
         if (ec == error::success)
-            received_hash = encode_base16(tx.hash());
+            received_hash = encode_hash(tx.hash());
     };
 
-    client.transaction_pool_fetch_transaction2(on_done, hash_literal(test_hash));
+    client.transaction_pool_fetch_transaction2(on_done, hash_literal(test_tx_hash));
     client.wait();
 
     BOOST_REQUIRE_EQUAL(received_hash, expected_hash);
 }
 
-/* BOOST_AUTO_TEST_CASE(client__subscribe__test) */
-/* { */
-/*     CLIENT_TEST_SETUP; */
-
-/*     const auto on_reply = [](const code&) {}; */
-/*     client.subscribe_address(on_error, on_reply, payment_address(address_satoshi)); */
-
-/*     HANDLE_ROUTING_FRAMES(capture.out); */
-/*     BOOST_REQUIRE_EQUAL(capture.out.size(), 3u); */
-/*     BOOST_REQUIRE_EQUAL(to_string(capture.out[0]), "subscribe.address"); */
-/*     BOOST_REQUIRE_EQUAL(encode_base16(capture.out[2]), "f85beb6356d0813ddb0dbb14230a249fe931a135"); */
-/* } */
-
+BOOST_AUTO_TEST_SUITE_END()
 BOOST_AUTO_TEST_SUITE_END()

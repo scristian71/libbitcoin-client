@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2011-2017 libbitcoin developers (see AUTHORS)
+ * Copyright (c) 2011-2019 libbitcoin developers (see AUTHORS)
  *
  * This file is part of libbitcoin.
  *
@@ -20,7 +20,7 @@
 #include <memory>
 #include <bitcoin/client.hpp>
 
-using namespace bc;
+using namespace bc::system;
 using namespace bc::client;
 using namespace bc::protocol;
 
@@ -44,7 +44,7 @@ int main(int argc, char* argv[])
     };
 
     obelisk_client client;
-    client.connect(bc::config::endpoint(argv[1]));
+    client.connect(config::endpoint(argv[1]));
 
     // Make the request.
     client.blockchain_fetch_last_height(completion_handler);
