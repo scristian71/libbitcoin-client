@@ -1,5 +1,5 @@
 ///////////////////////////////////////////////////////////////////////////////
-// Copyright (c) 2014-2019 libbitcoin-client developers (see COPYING).
+// Copyright (c) 2014-2020 libbitcoin-client developers (see COPYING).
 //
 //        GENERATED SOURCE CODE, DO NOT EDIT EXCEPT EXPERIMENTALLY
 //
@@ -19,7 +19,6 @@
 #include <bitcoin/client/define.hpp>
 #include <bitcoin/client/history.hpp>
 #include <bitcoin/client/obelisk_client.hpp>
-#include <bitcoin/client/stealth.hpp>
 #include <bitcoin/client/version.hpp>
 
 #endif
